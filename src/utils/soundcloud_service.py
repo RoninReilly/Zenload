@@ -80,7 +80,7 @@ class SoundcloudService:
     async def close(self):
         """Close underlying session."""
         try:
-            if self.client.session and not self.client.session.closed:
+            if getattr(self.client, "session", None) and not self.client.session.closed:
                 await asyncio.wait_for(self.client.session.close(), timeout=3)
         except Exception as e:
             logger.warning(f"Error closing SoundCloud session: {e}")
