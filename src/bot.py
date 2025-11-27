@@ -3,7 +3,7 @@ import logging.config
 from pathlib import Path
 import os
 import fcntl
-from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, PreCheckoutQueryHandler, filters
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, PreCheckoutQueryHandler, InlineQueryHandler, filters
 import signal
 import asyncio
 import sys
@@ -12,7 +12,8 @@ from .config import TOKEN, LOGGING_CONFIG, BASE_DIR
 from .database import UserSettingsManager, UserActivityLogger
 from .locales import Localization
 from .utils import KeyboardBuilder, DownloadManager
-from .handlers import CommandHandlers, MessageHandlers, CallbackHandlers, PaymentHandlers
+from .utils.soundcloud_service import SoundcloudService
+from .handlers import CommandHandlers, MessageHandlers, CallbackHandlers, PaymentHandlers, InlineHandlers
 
 # Configure logging
 logging.config.dictConfig(LOGGING_CONFIG)
@@ -57,6 +58,7 @@ class ZenloadBot:
         self.settings_manager = UserSettingsManager()
         self.localization = Localization()
         self.activity_logger = UserActivityLogger(self.settings_manager.db)
+        self.soundcloud_service = SoundcloudService.get_instance()
         
         # Initialize utility classes
         self.keyboard_builder = KeyboardBuilder(
@@ -93,6 +95,11 @@ class ZenloadBot:
             self.localization,
             self.settings_manager
         )
+        self.inline_handlers = InlineHandlers(
+            self.settings_manager,
+            self.localization,
+            self.soundcloud_service
+        )
         
         self._setup_handlers()
         self._stopping = False
@@ -124,6 +131,9 @@ class ZenloadBot:
         
         # Callback query handler
         self.application.add_handler(CallbackQueryHandler(self.callback_handlers.handle_callback))
+
+        # Inline query handler for SoundCloud search
+        self.application.add_handler(InlineQueryHandler(self.inline_handlers.handle_inline_query))
 
     async def stop(self):
         """Stop the bot gracefully"""
@@ -279,5 +289,3 @@ class ZenloadBot:
                         loop.close()
                     except Exception:
                         pass
-
-

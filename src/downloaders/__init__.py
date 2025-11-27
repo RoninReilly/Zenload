@@ -4,7 +4,8 @@ from .instagram import InstagramDownloader
 from .tiktok import TikTokDownloader
 from .yandex import YandexMusicDownloader
 from .pinterest import PinterestDownloader
-from .youtube import YouTubeDownloader  
+from .youtube import YouTubeDownloader
+from .soundcloud import SoundcloudDownloader
 
 
 class DownloaderFactory:
@@ -15,7 +16,8 @@ class DownloaderFactory:
         TikTokDownloader,
         YandexMusicDownloader,
         PinterestDownloader,
-        YouTubeDownloader 
+        YouTubeDownloader,
+        SoundcloudDownloader
     ]
 
     @classmethod

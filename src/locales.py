@@ -9,7 +9,8 @@ LOCALES: Dict[str, Dict[str, str]] = {
             "• Instagram\n"
             "• TikTok\n"
             "• Pinterest\n"
-            "• Yandex Music\n\n"
+            "• Yandex Music\n"
+            "• SoundCloud\n\n"
             "Команды:\n"
             "/settings - Настройки\n"
             "/help - Помощь\n"
@@ -41,7 +42,8 @@ LOCALES: Dict[str, Dict[str, str]] = {
             "• Instagram\n"
             "• TikTok\n"
             "• Pinterest\n"
-            "• Yandex Music"
+            "• Yandex Music\n"
+            "• SoundCloud"
         ),
         'settings_menu': (
             "Настройки\n\n"
@@ -115,7 +117,8 @@ LOCALES: Dict[str, Dict[str, str]] = {
             "• Instagram\n"
             "• TikTok\n"
             "• Pinterest\n"
-            "• Yandex Music\n\n"
+            "• Yandex Music\n"
+            "• SoundCloud\n\n"
             "Commands:\n"
             "/settings - Settings\n"
             "/help - Help\n"
@@ -147,7 +150,8 @@ LOCALES: Dict[str, Dict[str, str]] = {
             "• Instagram\n"
             "• TikTok\n"
             "• Pinterest\n"
-            "• Yandex Music"
+            "• Yandex Music\n"
+            "• SoundCloud"
         ),
         'settings_menu': (
             "Settings\n\n"
