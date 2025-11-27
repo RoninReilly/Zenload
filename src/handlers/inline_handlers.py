@@ -67,12 +67,12 @@ class InlineHandlers:
             results.append(
                 InlineQueryResultArticle(
                     id=str(uuid4()),
-                    title="Отправить в бота",
-                    description=query,
+                    title="SoundCloud поиск недоступен",
+                    description="Нажми, чтобы отправить запрос боту",
                     input_message_content=InputTextMessageContent(
-                        message_text=query
+                        message_text=query or "SoundCloud search failed"
                     ),
                 )
             )
 
-        await update.inline_query.answer(results, cache_time=15, is_personal=True)
+        await update.inline_query.answer(results, cache_time=5, is_personal=True)

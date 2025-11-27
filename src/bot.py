@@ -182,6 +182,12 @@ class ZenloadBot:
         except Exception as e:
             logger.error(f"Error stopping bot: {e}", exc_info=True)
         finally:
+            # Close SoundCloud session
+            try:
+                await asyncio.wait_for(self.soundcloud_service.close(), timeout=3)
+            except Exception as e:
+                logger.warning(f"Error closing SoundCloud service: {e}")
+
             # Release lock file and cleanup PID file
             if self.lock_fd is not None:
                 try:

@@ -38,16 +38,23 @@ class SoundcloudService:
         async with self._login_lock:
             if self._logged_in and self.client.session and not self.client.session.closed:
                 return
-            await self.client.login()
-            self._logged_in = True
-            logger.info("SoundCloud client logged in with public tokens")
+            try:
+                await asyncio.wait_for(self.client.login(), timeout=10)
+                self._logged_in = True
+                logger.info("SoundCloud client logged in with public tokens")
+            except Exception as e:
+                logger.error(f"SoundCloud login failed: {e}", exc_info=True)
+                raise
 
     async def search_tracks(self, query: str, limit: int = 6) -> List[Dict[str, Any]]:
         """Search tracks and return streamrip track dicts (with composite ids)."""
         await self.ensure_logged_in()
         if not query:
             return []
-        results = await self.client.search("track", query, limit=limit)
+        results = await asyncio.wait_for(
+            self.client.search("track", query, limit=limit),
+            timeout=8
+        )
         if not results:
             return []
         return results[0].get("collection", [])
@@ -69,6 +76,14 @@ class SoundcloudService:
             track_id,
             self.config.session.soundcloud.quality,
         )
+
+    async def close(self):
+        """Close underlying session."""
+        try:
+            if self.client.session and not self.client.session.closed:
+                await asyncio.wait_for(self.client.session.close(), timeout=3)
+        except Exception as e:
+            logger.warning(f"Error closing SoundCloud session: {e}")
 
     async def get_stream_url(self, track: Dict[str, Any]) -> str | None:
         """

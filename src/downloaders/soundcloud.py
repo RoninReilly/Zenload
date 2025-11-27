@@ -3,8 +3,6 @@ import re
 from pathlib import Path
 from typing import Tuple, Dict, List
 
-from streamrip.exceptions import NonStreamableError
-
 from .base import BaseDownloader, DownloadError
 from ..config import DOWNLOADS_DIR
 from ..utils.soundcloud_service import SoundcloudService
@@ -37,15 +35,17 @@ class SoundcloudDownloader(BaseDownloader):
             }
         ]
 
-    async def _get_track_info(self, url: str) -> Tuple[Dict, Path, object]:
-        """Resolve URL, get downloadable, and compute target path."""
+    async def _get_track_info(self, url: str) -> Tuple[Dict, Path, str]:
+        """Resolve URL, select stream URL, and compute target path."""
         track_meta = await self.service.resolve_track(url)
         if not track_meta or track_meta.get("kind") != "track":
             raise DownloadError("Track not found or unsupported")
 
-        downloadable = await self.service.get_downloadable(track_meta["id"])
-        ext = downloadable.extension or "mp3"
+        stream_url = await self.service.get_stream_url(track_meta)
+        if not stream_url:
+            raise DownloadError("No downloadable stream found for this track")
 
+        ext = "mp3"
         title = track_meta.get("title") or "SoundCloud Track"
         artist = ""
         user_info = track_meta.get("user") or {}
@@ -55,7 +55,7 @@ class SoundcloudDownloader(BaseDownloader):
         filename = f"{artist + ' - ' if artist else ''}{title}.{ext}"
         safe_name = self._prepare_filename(filename)
         file_path = DOWNLOADS_DIR / safe_name
-        return track_meta, file_path, downloadable
+        return track_meta, file_path, stream_url
 
     def _format_metadata(self, track_meta: Dict) -> str:
         parts = []
@@ -92,25 +92,29 @@ class SoundcloudDownloader(BaseDownloader):
     async def download(self, url: str, format_id: str = None) -> Tuple[str, Path]:
         try:
             self.update_progress("status_downloading", 5)
-            track_meta, file_path, downloadable = await self._get_track_info(url)
+            track_meta, file_path, stream_url = await self._get_track_info(url)
 
-            total_size = await downloadable.size()
             downloaded = 0
+            total_size = 0
 
-            def progress_cb(chunk_size: int):
-                nonlocal downloaded, total_size
-                downloaded += chunk_size
-                if total_size:
-                    progress = min(100, max(10, int(downloaded / total_size * 90)))
-                    self.update_progress("status_downloading", progress)
+            session = self.service.client.session
+            async with session.get(stream_url) as resp:
+                resp.raise_for_status()
+                total_size = int(resp.headers.get("Content-Length") or 0)
+                with open(file_path, "wb") as f:
+                    async for chunk in resp.content.iter_chunked(64 * 1024):
+                        if not chunk:
+                            continue
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        if total_size:
+                            progress = min(100, max(10, int(downloaded / total_size * 90)))
+                            self.update_progress("status_downloading", progress)
 
-            await downloadable.download(str(file_path), progress_cb)
             self.update_progress("status_downloading", 100)
 
             metadata = self._format_metadata(track_meta)
             return metadata, file_path
-        except NonStreamableError as e:
-            raise DownloadError(f"Track is not streamable: {e}")
         except Exception as e:
             logger.error(f"Error downloading from SoundCloud: {e}", exc_info=True)
             raise DownloadError(f"Download error: {e}")
