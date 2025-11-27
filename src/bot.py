@@ -265,6 +265,15 @@ class ZenloadBot:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
 
+            # Ensure webhook is removed so long polling can start cleanly
+            try:
+                loop.run_until_complete(
+                    self.application.bot.delete_webhook(drop_pending_updates=True)
+                )
+                logger.info("Webhook removed before starting polling")
+            except Exception as e:
+                logger.warning(f"Could not delete webhook before polling: {e}")
+
             # Run the application
             self.application.run_polling(drop_pending_updates=True)
         except (KeyboardInterrupt, SystemExit):
