@@ -22,13 +22,14 @@ class InlineHandlers:
         if not query:
             return
 
+        results = []
+
         try:
-            tracks = await self.soundcloud_service.search_tracks(query, limit=6)
+            tracks = await self.soundcloud_service.search_tracks(query, limit=4)
+            logger.info(f"Inline query '{query}' -> {len(tracks)} tracks")
         except Exception as e:
             logger.error(f"SoundCloud search failed: {e}", exc_info=True)
             tracks = []
-
-        results = []
 
         for track in tracks:
             try:
@@ -64,15 +65,20 @@ class InlineHandlers:
 
         if not results:
             # Fallback: allow sending the raw query back to the bot for standard handling
+            fallback_text = query if query else "SoundCloud search failed"
             results.append(
                 InlineQueryResultArticle(
                     id=str(uuid4()),
                     title="SoundCloud поиск недоступен",
                     description="Нажми, чтобы отправить запрос боту",
                     input_message_content=InputTextMessageContent(
-                        message_text=query or "SoundCloud search failed"
+                        message_text=fallback_text
                     ),
                 )
             )
 
-        await update.inline_query.answer(results, cache_time=5, is_personal=True)
+        try:
+            logger.info(f"Inline answer for '{query}' with {len(results)} results")
+            await update.inline_query.answer(results, cache_time=0, is_personal=True)
+        except Exception as e:
+            logger.error(f"Failed to answer inline query: {e}", exc_info=True)

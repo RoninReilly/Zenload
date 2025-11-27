@@ -46,7 +46,7 @@ class SoundcloudService:
                 logger.error(f"SoundCloud login failed: {e}", exc_info=True)
                 raise
 
-    async def search_tracks(self, query: str, limit: int = 6) -> List[Dict[str, Any]]:
+    async def search_tracks(self, query: str, limit: int = 4) -> List[Dict[str, Any]]:
         """Search tracks and return streamrip track dicts (with composite ids)."""
         await self.ensure_logged_in()
         if not query:
@@ -106,7 +106,10 @@ class SoundcloudService:
             return None
 
         try:
-            resp, status = await self.client._request(target["url"])  # type: ignore[attr-defined]
+            resp, status = await asyncio.wait_for(
+                self.client._request(target["url"]),  # type: ignore[attr-defined]
+                timeout=6,
+            )
             if status == 200:
                 return resp.get("url")
         except Exception as e:
