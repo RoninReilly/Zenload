@@ -264,6 +264,13 @@ class ZenloadBot:
             # Create new event loop and set it as the current one
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
+
+            # Try to break conflicting long polling sessions (helpful on redeploy)
+            try:
+                loop.run_until_complete(self.application.bot.log_out())
+                logger.info("Issued bot.log_out() to clear previous getUpdates sessions")
+            except Exception as e:
+                logger.warning(f"Could not clear previous getUpdates sessions: {e}")
             
             # Run the application
             self.application.run_polling(drop_pending_updates=True)
