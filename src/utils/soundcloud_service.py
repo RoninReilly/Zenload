@@ -1,48 +1,29 @@
-import logging
-from typing import List, Dict, Any, Optional, Generator
-from concurrent.futures import ThreadPoolExecutor
 import asyncio
-import aiohttp
+import json
+import logging
+import subprocess
+from typing import List, Dict, Any, Optional
+from concurrent.futures import ThreadPoolExecutor
 
-from soundcloud import SoundCloud, BasicTrack
+import aiohttp
 
 logger = logging.getLogger(__name__)
 
 
 class SoundcloudService:
-    """Thin wrapper around soundcloud-v2 library for search/resolve/stream."""
+    """SoundCloud service using yt-dlp for search and stream URLs."""
 
     _instance = None
 
     def __init__(self):
-        self._client: Optional[SoundCloud] = None
         self._executor = ThreadPoolExecutor(max_workers=2)
         self._session: Optional[aiohttp.ClientSession] = None
-        self._init_lock = asyncio.Lock()
 
     @classmethod
     def get_instance(cls) -> "SoundcloudService":
         if cls._instance is None:
             cls._instance = cls()
         return cls._instance
-
-    async def _ensure_client(self) -> SoundCloud:
-        """Lazily initialize the SoundCloud client."""
-        if self._client is not None:
-            return self._client
-
-        async with self._init_lock:
-            if self._client is not None:
-                return self._client
-
-            loop = asyncio.get_event_loop()
-            # SoundCloud client init is synchronous, run in executor
-            self._client = await loop.run_in_executor(
-                self._executor,
-                lambda: SoundCloud()
-            )
-            logger.info("SoundCloud client initialized (no auth required)")
-            return self._client
 
     async def _get_session(self) -> aiohttp.ClientSession:
         """Get or create aiohttp session for stream downloads."""
@@ -55,124 +36,168 @@ class SoundcloudService:
         """Expose session for downloader compatibility."""
         return self._session
 
-    def _track_to_dict(self, track: BasicTrack) -> Dict[str, Any]:
-        """Convert soundcloud-v2 track object to dict matching old streamrip format."""
-        user_dict = {}
-        if track.user:
-            user_dict = {
-                "username": getattr(track.user, "username", None),
-                "full_name": getattr(track.user, "full_name", None),
-                "permalink": getattr(track.user, "permalink", None),
-            }
+    def _run_ytdlp(self, args: List[str], timeout: int = 30) -> Optional[str]:
+        """Run yt-dlp with given arguments and return stdout."""
+        cmd = ["yt-dlp", "--no-warnings"] + args
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=timeout
+            )
+            if result.returncode == 0:
+                return result.stdout
+            logger.error(f"yt-dlp error: {result.stderr}")
+        except subprocess.TimeoutExpired:
+            logger.error("yt-dlp timeout")
+        except Exception as e:
+            logger.error(f"yt-dlp exception: {e}")
+        return None
 
-        transcodings = []
-        if track.media and track.media.transcodings:
-            for t in track.media.transcodings:
-                transcodings.append({
-                    "url": t.url,
-                    "preset": t.preset,
-                    "duration": t.duration,
-                    "snipped": t.snipped,
-                    "format": {
-                        "protocol": t.format.protocol if t.format else None,
-                        "mime_type": t.format.mime_type if t.format else None,
-                    },
-                    "quality": t.quality,
-                })
+    def _parse_track(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Convert yt-dlp track data to our standard format."""
+        # Get best audio format URL for streaming
+        formats = data.get("formats", [])
+        stream_url = None
+        
+        # Prefer http progressive over HLS
+        for fmt in formats:
+            if fmt.get("protocol") == "http" and fmt.get("acodec") != "none":
+                stream_url = fmt.get("url")
+                break
+        
+        # Fallback to any audio format
+        if not stream_url:
+            for fmt in formats:
+                if fmt.get("acodec") != "none":
+                    stream_url = fmt.get("url")
+                    break
+
+        duration_ms = int((data.get("duration") or 0) * 1000)
 
         return {
-            "id": track.id,
-            "title": track.title,
-            "kind": track.kind,
-            "permalink_url": track.permalink_url,
-            "duration": track.duration,
-            "full_duration": track.full_duration,
-            "artwork_url": track.artwork_url,
-            "playback_count": getattr(track, "playback_count", None),
-            "user": user_dict,
-            "media": {"transcodings": transcodings},
-            "track_authorization": getattr(track, "track_authorization", None),
+            "id": data.get("id"),
+            "title": data.get("title") or "SoundCloud Track",
+            "kind": "track",
+            "permalink_url": data.get("webpage_url") or data.get("url"),
+            "duration": duration_ms,
+            "full_duration": duration_ms,
+            "artwork_url": data.get("thumbnail"),
+            "playback_count": data.get("view_count"),
+            "user": {
+                "username": data.get("uploader"),
+                "full_name": data.get("uploader"),
+                "permalink": data.get("uploader_id"),
+            },
+            "media": {
+                "transcodings": []  # Not used with yt-dlp approach
+            },
+            # yt-dlp specific - direct stream URL
+            "_stream_url": stream_url,
+            "_formats": formats,
         }
 
     async def search_tracks(self, query: str, limit: int = 4) -> List[Dict[str, Any]]:
-        """Search tracks and return list of track dicts."""
+        """Search tracks using yt-dlp's scsearch."""
         if not query:
             return []
 
-        client = await self._ensure_client()
         loop = asyncio.get_event_loop()
 
         def _search():
-            results = []
-            try:
-                gen: Generator = client.search_tracks(query)
-                for i, track in enumerate(gen):
-                    if i >= limit:
-                        break
-                    results.append(self._track_to_dict(track))
-            except Exception as e:
-                logger.error(f"SoundCloud search error: {e}")
-            return results
+            # scsearch:N searches SoundCloud and returns N results
+            args = [
+                "--dump-json",
+                "--flat-playlist",
+                f"scsearch{limit}:{query}"
+            ]
+            output = self._run_ytdlp(args, timeout=15)
+            if not output:
+                return []
 
-        tracks = await asyncio.wait_for(
-            loop.run_in_executor(self._executor, _search),
-            timeout=10
-        )
-        return tracks
+            tracks = []
+            for line in output.strip().split('\n'):
+                if line:
+                    try:
+                        data = json.loads(line)
+                        # flat-playlist gives minimal info, get URL for full info later
+                        track_url = data.get("url") or data.get("webpage_url")
+                        if track_url:
+                            tracks.append({
+                                "id": data.get("id"),
+                                "title": data.get("title") or "SoundCloud Track",
+                                "kind": "track",
+                                "permalink_url": track_url,
+                                "duration": int((data.get("duration") or 0) * 1000),
+                                "full_duration": int((data.get("duration") or 0) * 1000),
+                                "artwork_url": data.get("thumbnail"),
+                                "user": {
+                                    "username": data.get("uploader"),
+                                    "full_name": data.get("uploader"),
+                                },
+                                "_stream_url": None,  # Will be fetched on demand
+                                "_url": track_url,
+                            })
+                    except json.JSONDecodeError:
+                        continue
+            return tracks
+
+        try:
+            return await asyncio.wait_for(
+                loop.run_in_executor(self._executor, _search),
+                timeout=20
+            )
+        except asyncio.TimeoutError:
+            logger.error("SoundCloud search timeout")
+            return []
 
     async def resolve_track(self, url: str) -> Optional[Dict[str, Any]]:
-        """Resolve a SoundCloud URL into track metadata."""
-        client = await self._ensure_client()
+        """Resolve a SoundCloud URL into track metadata with stream URL."""
         loop = asyncio.get_event_loop()
 
         def _resolve():
+            args = [
+                "--dump-json",
+                "--no-download",
+                url
+            ]
+            output = self._run_ytdlp(args, timeout=20)
+            if not output:
+                return None
             try:
-                result = client.resolve(url)
-                if result and hasattr(result, "kind") and result.kind == "track":
-                    return self._track_to_dict(result)
-            except Exception as e:
-                logger.error(f"SoundCloud resolve error: {e}")
-            return None
+                data = json.loads(output)
+                return self._parse_track(data)
+            except json.JSONDecodeError:
+                return None
 
-        return await asyncio.wait_for(
-            loop.run_in_executor(self._executor, _resolve),
-            timeout=10
-        )
+        try:
+            return await asyncio.wait_for(
+                loop.run_in_executor(self._executor, _resolve),
+                timeout=25
+            )
+        except asyncio.TimeoutError:
+            logger.error("SoundCloud resolve timeout")
+            return None
 
     async def get_stream_url(self, track: Dict[str, Any]) -> Optional[str]:
         """
-        Return a direct stream URL, preferring progressive mp3 if available.
+        Get direct stream URL for a track.
+        First checks if already cached, otherwise fetches via yt-dlp.
         """
-        client = await self._ensure_client()
-        media = track.get("media", {})
-        transcodings = media.get("transcodings") or []
+        # Check if we already have stream URL
+        stream_url = track.get("_stream_url")
+        if stream_url:
+            return stream_url
 
-        if not transcodings:
+        # Need to fetch full info to get stream URL
+        track_url = track.get("_url") or track.get("permalink_url")
+        if not track_url:
             return None
 
-        # Prefer progressive (direct download) over HLS
-        progressive = next(
-            (t for t in transcodings if t.get("format", {}).get("protocol") == "progressive"),
-            None,
-        )
-        target = progressive or transcodings[0]
-        transcoding_url = target.get("url")
-
-        if not transcoding_url:
-            return None
-
-        # Need to fetch the actual stream URL from the transcoding endpoint
-        # The transcoding URL requires client_id parameter
-        try:
-            session = await self._get_session()
-            params = {"client_id": client.client_id}
-
-            async with session.get(transcoding_url, params=params, timeout=aiohttp.ClientTimeout(total=8)) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    return data.get("url")
-        except Exception as e:
-            logger.error(f"Failed to fetch stream URL: {e}")
+        full_track = await self.resolve_track(track_url)
+        if full_track:
+            return full_track.get("_stream_url")
 
         return None
 
