@@ -1,13 +1,19 @@
 import asyncio
 import json
 import logging
+import os
 import subprocess
 from typing import List, Dict, Any, Optional
 from concurrent.futures import ThreadPoolExecutor
 
 import aiohttp
+from aiohttp_socks import ProxyConnector
 
 logger = logging.getLogger(__name__)
+
+# Proxy for SoundCloud requests (to bypass geo-blocking)
+# Supports: socks5://host:port, socks4://host:port, http://host:port
+SOUNDCLOUD_PROXY = os.getenv("SOUNDCLOUD_PROXY", "")
 
 
 class SoundcloudService:
@@ -28,7 +34,14 @@ class SoundcloudService:
     async def _get_session(self) -> aiohttp.ClientSession:
         """Get or create aiohttp session for stream downloads."""
         if self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession()
+            connector = None
+            if SOUNDCLOUD_PROXY:
+                try:
+                    connector = ProxyConnector.from_url(SOUNDCLOUD_PROXY)
+                    logger.info(f"Using proxy for SoundCloud downloads: {SOUNDCLOUD_PROXY.split('@')[-1]}")
+                except Exception as e:
+                    logger.warning(f"Failed to create proxy connector: {e}")
+            self._session = aiohttp.ClientSession(connector=connector)
         return self._session
 
     @property
@@ -36,9 +49,16 @@ class SoundcloudService:
         """Expose session for downloader compatibility."""
         return self._session
 
+    def _get_ytdlp_base_args(self) -> List[str]:
+        """Get base yt-dlp arguments including proxy if configured."""
+        args = ["yt-dlp", "--no-warnings"]
+        if SOUNDCLOUD_PROXY:
+            args.extend(["--proxy", SOUNDCLOUD_PROXY])
+        return args
+
     def _run_ytdlp(self, args: List[str], timeout: int = 30) -> Optional[str]:
         """Run yt-dlp with given arguments and return stdout."""
-        cmd = ["yt-dlp", "--no-warnings"] + args
+        cmd = self._get_ytdlp_base_args() + args
         try:
             result = subprocess.run(
                 cmd,
