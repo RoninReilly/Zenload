@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 class SoundcloudDownloader(BaseDownloader):
-    """Downloader powered by streamrip's SoundCloud client."""
+    """Downloader powered by soundcloud-v2 library."""
 
     _url_pattern = re.compile(r"(soundcloud\.com|sndcdn\.com)", re.IGNORECASE)
 
@@ -97,7 +97,7 @@ class SoundcloudDownloader(BaseDownloader):
             downloaded = 0
             total_size = 0
 
-            session = self.service.client.session
+            session = await self.service._get_session()
             async with session.get(stream_url) as resp:
                 resp.raise_for_status()
                 total_size = int(resp.headers.get("Content-Length") or 0)
